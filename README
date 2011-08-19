@@ -1,8 +1,15 @@
+----------------------------
+Papercut NNTP Server - Fork
+----------------------------
+
+This is a fork of the original Papercut news server to support PHPbb3.
+Support for other backends has been removed.
+
 --------------------
 Papercut NNTP Server
 --------------------
 
-Papercut is a news server written in 100% pure Python. It is intended to be 
+Papercut is a news server written in 100% pure Python. It is intended to be
 extensible to the point where people can develop their own plug-ins and by
 that integrate the NNTP protocol to their applications.
 
@@ -12,15 +19,15 @@ NNTP protocol. It was tested against Netscape News, Mozilla News and tin (under
 Solaris) and it works properly.
 
 The original need for this server was to integrate my PHP related web site
-forums with an NNTP gateway interface, so people could list and read the 
-messages posted to the forums on their favorite News reader. The software on 
-this case was Phorum (http://phorum.org) and the site is PHPBrasil.com 
+forums with an NNTP gateway interface, so people could list and read the
+messages posted to the forums on their favorite News reader. The software on
+this case was Phorum (http://phorum.org) and the site is PHPBrasil.com
 (http://phpbrasil.com). At first it wasn't intended to support message posting,
 but it made sense to allow it after seeing how effective the tool was.
 
 The concept of storage modules was created exactly for this. I would create a Python
 class to handle the inner-workins of Phorum and MySQL and if I ever wanted to
-integrate the server with another type of software, I would just need to write 
+integrate the server with another type of software, I would just need to write
 a new storage module class.
 
 Anyway, back to the technical praise. Papercut is multi-threaded on Windows
@@ -35,3 +42,5 @@ tool and you made a few enhancements to it or even fixed some bugs, please send
 me a patch or something. I will appreciate it :)
 
 -- Joao Prado Maia (jpm@papercut.org)
+
+

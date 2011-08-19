@@ -1,15 +1,21 @@
 #!/usr/bin/env python
 # Copyright (c) 2002, 2003, 2004 Joao Prado Maia. See the LICENSE file for more information.
-# $Id: phpbb_mysql.py,v 1.20 2004-08-01 01:51:48 jpm Exp $
+# $Id: phpbb_mysql.py,v 1.20 2004/08/01 01:51:48 jpm Exp $
+import warnings
+warnings.filterwarnings('ignore', '.*the sets module is deprecated.*', DeprecationWarning, 'MySQLdb')
 import MySQLdb
 import time
-from mimify import mime_encode_header, mime_decode_header
+#from email.header import decode_header (is totally different returning list)
+from mimify import mime_decode_header
 import re
 import settings
-import md5
-import mime
+from hashlib import md5
+#import mime
 import strutil
-
+import random
+import base64
+import phpass
+import email
 
 # patch by Andreas Wegmann <Andreas.Wegmann@VSA.de> to fix the handling of unusual encodings of messages
 q_quote_multiline = re.compile("=\?(.*?)\?[qQ]\?(.*?)\?=.*?=\?\\1\?[qQ]\?(.*?)\?=", re.M | re.S)
@@ -25,30 +31,62 @@ lines_regexp = re.compile("^Lines:(.*)", re.M)
 class Papercut_Storage:
     """
     Storage Backend interface for the Phorum web message board software (http://phorum.org)
-    
+
     This is the interface for Phorum running on a MySQL database. For more information
     on the structure of the 'storage' package, please refer to the __init__.py
     available on the 'storage' sub-directory.
     """
 
     def __init__(self):
-        self.conn = MySQLdb.connect(host=settings.dbhost, db=settings.dbname, user=settings.dbuser, passwd=settings.dbpass)
-        self.cursor = self.conn.cursor()
+        self.connect()
+
+    def __del__(self):
+        self.cursor.close()
+        self.conn.close();
 
     def get_message_body(self, headers):
         """Parses and returns the most appropriate message body possible.
-        
+
         The function tries to extract the plaintext version of a MIME based
-        message, and if it is not available then it returns the html version.        
+        message, and if it is not available then it returns the html version.
         """
-        return mime.get_text_message(headers)
+        text= ""
+        html= ""
+        msg = email.message_from_string(headers)
+        for part in msg.walk():
+            if part.get_content_type()== 'text/plain':
+                text=text+part.get_payload(decode=1)
+            elif part.get_content_type()=='text/html':
+                html=html+part.get_payload(decode=1)
+        if text=="":
+            if html=="":
+                if not msg.is_multipart():
+                    text=msg.get_payload()
+            else:
+                text=html
+        return text
+
+    def connect(self):
+        self.conn = MySQLdb.connect(host=settings.dbhost, db=settings.dbname, user=settings.dbuser, passwd=settings.dbpass)
+        self.cursor = self.conn.cursor()
+
+    def query(self, sql):
+        try:
+            self.cursor.execute(sql)
+        except (AttributeError, MySQLdb.OperationalError):
+            self.connect()
+            self.cursor.execute(sql)
+        return self.cursor.rowcount
 
     def quote_string(self, text):
         """Quotes strings the MySQL way."""
-        return text.replace("'", "\\'")
+        return self.conn.escape_string(text)
 
     def make_bbcode_uid(self):
-        return md5.new(str(time.clock())).hexdigest()
+        random.seed()
+        hash=md5()
+        hash.update(str(random.random()))
+        return base64.encodestring(hash.digest())[0:5]
 
     def encode_ip(self, dotquad_ip):
         t = dotquad_ip.split('.')
@@ -62,7 +100,7 @@ class Papercut_Storage:
                     %sforums
                 WHERE
                     LOWER(nntp_group_name)=LOWER('%s')""" % (settings.phpbb_table_prefix, group_name)
-        self.cursor.execute(stmt)
+        self.query(stmt)
         return self.cursor.fetchone()[0]
 
     def article_exists(self, group_name, style, range):
@@ -80,7 +118,7 @@ class Papercut_Storage:
                 stmt = "%s AND post_id < %s" % (stmt, range[1])
         else:
             stmt = "%s AND post_id = %s" % (stmt, range[0])
-        self.cursor.execute(stmt)
+        self.query(stmt)
         return self.cursor.fetchone()[0]
 
     def get_first_article(self, group_name):
@@ -92,7 +130,7 @@ class Papercut_Storage:
                     %sposts
                 WHERE
                     forum_id=%s""" % (settings.phpbb_table_prefix, forum_id)
-        num_rows = self.cursor.execute(stmt)
+        num_rows = self.query(stmt)
         return self.cursor.fetchone()[0]
 
     def get_group_stats(self, group_name):
@@ -109,7 +147,7 @@ class Papercut_Storage:
                     %sposts
                 WHERE
                     forum_id=%s""" % (settings.phpbb_table_prefix, forum_id)
-        num_rows = self.cursor.execute(stmt)
+        num_rows = self.query(stmt)
         return self.cursor.fetchone()
 
     def get_forum(self, group_name):
@@ -119,12 +157,48 @@ class Papercut_Storage:
                 FROM
                     %sforums
                 WHERE
-                    nntp_group_name='%s'""" % (settings.phpbb_table_prefix, group_name)
-        self.cursor.execute(stmt)
+                    nntp_group_name='%s'""" % (settings.phpbb_table_prefix, self.quote_string(group_name))
+        self.query(stmt)
         return self.cursor.fetchone()[0]
 
     def get_message_id(self, msg_num, group):
         return '<%s@%s>' % (msg_num, group)
+
+    def ip_allowed(self, user_ip):
+        prefix = settings.phpbb_table_prefix
+        stmt = """
+                SELECT ban_id
+                FROM %sbanlist
+                WHERE ban_ip='%s' and ban_exclude=0
+               """ % (prefix, user_ip)
+        if self.query(stmt)==0:
+            return 1
+        return 0
+
+    def check_permission(self, forum_id, user_id, permission):
+        prefix = settings.phpbb_table_prefix
+        stmt = """
+                SELECT DISTINCT f.nntp_group_name
+                FROM %sforums AS f
+                INNER JOIN %susers AS u
+                ON u.user_id=%s
+                LEFT OUTER JOIN %sacl_users AS aa
+                ON f.forum_id=aa.forum_id AND aa.user_id=u.user_id AND (aa.auth_option_id=0 OR aa.auth_setting=1)
+                LEFT OUTER JOIN %sacl_groups AS ug
+                ON f.forum_id=ug.forum_id AND ug.group_id=u.group_id AND (ug.auth_option_id=0 OR ug.auth_setting=1)
+                LEFT OUTER JOIN %sacl_roles_data as ard
+                ON ard.auth_setting=1 AND
+                  ((aa.auth_option_id=0 AND aa.auth_role_id=ard.role_id) OR
+                  (ISNULL(aa.auth_setting) AND ug.auth_option_id=0 AND ug.auth_role_id=ard.role_id))
+                INNER JOIN %sacl_options as ao
+                ON ao.auth_option='%s' AND
+                 (aa.auth_option_id=ao.auth_option_id OR ard.auth_option_id=ao.auth_option_id OR
+                  (ISNULL(aa.auth_setting) AND ug.auth_option_id=ao.auth_option_id))
+                WHERE f.forum_id=%s
+               """ % (prefix, prefix, user_id, prefix, prefix, prefix, prefix, permission, forum_id)
+        if self.query(stmt)==0:
+            return 0
+        return 1
 
     def get_NEWGROUPS(self, ts, group='%'):
         # since phpBB doesn't record when each forum was created, we have no way of knowing this...
@@ -141,7 +215,7 @@ class Papercut_Storage:
                     nntp_group_name LIKE '%s'
                 ORDER BY
                     nntp_group_name ASC""" % (settings.phpbb_table_prefix, group.replace('*', '%'))
-        self.cursor.execute(stmt)
+        self.query(stmt)
         result = list(self.cursor.fetchall())
         articles = []
         for group_name, forum_id in result:
@@ -153,7 +227,7 @@ class Papercut_Storage:
                     WHERE
                         forum_id=%s AND
                         post_time >= %s""" % (settings.phpbb_table_prefix, forum_id, ts)
-            num_rows = self.cursor.execute(stmt)
+            num_rows = self.query(stmt)
             if num_rows == 0:
                 continue
             ids = list(self.cursor.fetchall())
@@ -173,27 +247,25 @@ class Papercut_Storage:
         # If the username is supplied, then find what he is allowed to see
         if len(username) > 0:
             stmt = """
-                   SELECT
-                       DISTINCT f.nntp_group_name,
-                       f.forum_id
-                   FROM
-                       %sforums AS f
-                   INNER JOIN
-                       %sauth_access AS aa
-                   ON
-                       f.forum_id=aa.forum_id
-                   INNER JOIN
-                       %suser_group AS ug
-                   ON
-                       aa.group_id=ug.group_id
-                   INNER JOIN
-                       %susers AS u
-                   ON
-                       ug.user_id=u.user_id
-                   WHERE
-                       u.username='%s' AND
-                       LENGTH(f.nntp_group_name) > 0 OR
-                       f.auth_view = 0""" % (settings.phpbb_table_prefix, settings.phpbb_table_prefix, settings.phpbb_table_prefix, settings.phpbb_table_prefix, username)
+                   SELECT DISTINCT f.nntp_group_name, f.forum_id, u.user_id
+                   FROM %sforums AS f
+                   INNER JOIN %susers AS u
+                   ON u.username_clean='%s'
+                   LEFT OUTER JOIN %sacl_users AS aa
+                   ON f.forum_id=aa.forum_id AND aa.user_id=u.user_id AND (aa.auth_option_id=0 OR aa.auth_setting=1)
+                   LEFT OUTER JOIN %sacl_groups AS ug
+                   ON f.forum_id=ug.forum_id AND ug.group_id=u.group_id AND (ug.auth_option_id=0 OR ug.auth_setting=1)
+                   LEFT OUTER JOIN %sacl_roles_data as ard
+                   ON ard.auth_setting=1 AND
+                     ((aa.auth_option_id=0 AND aa.auth_role_id=ard.role_id) OR
+                     (ISNULL(aa.auth_setting) AND ug.auth_option_id=0 AND ug.auth_role_id=ard.role_id))
+                   INNER JOIN %sacl_options as ao
+                   ON ao.auth_option='f_list' AND
+                    (aa.auth_option_id=ao.auth_option_id OR ard.auth_option_id=ao.auth_option_id OR
+                     (ISNULL(aa.auth_setting) AND ug.auth_option_id=ao.auth_option_id))
+                   WHERE LENGTH(f.nntp_group_name) > 0
+                   ORDER BY f.nntp_group_name ASC
+                   """ % (settings.phpbb_table_prefix, settings.phpbb_table_prefix, username.lower().strip(), settings.phpbb_table_prefix, settings.phpbb_table_prefix, settings.phpbb_table_prefix, settings.phpbb_table_prefix)
         else:
             stmt = """
                    SELECT
@@ -202,21 +274,23 @@ class Papercut_Storage:
                    FROM
                        %sforums
                    WHERE
-                       LENGTH(nntp_group_name) > 0 AND auth_view=0
+                       LENGTH(nntp_group_name) > 0
                    ORDER BY
                        nntp_group_name ASC""" % (settings.phpbb_table_prefix)
-        self.cursor.execute(stmt)
+        self.query(stmt)
         result = list(self.cursor.fetchall())
         if len(result) == 0:
             return ""
         else:
             lists = []
-            for group_name, forum_id in result:
+            for group_name, forum_id, user_id in result:
                 total, maximum, minimum = self.get_forum_stats(forum_id)
                 if settings.server_type == 'read-only':
                     lists.append("%s %s %s n" % (group_name, maximum, minimum))
-                else:
+                elif self.check_permission(forum_id, user_id, 'f_post')!=0:
                     lists.append("%s %s %s y" % (group_name, maximum, minimum))
+                else:
+                    lists.append("%s %s %s n" % (group_name, maximum, minimum))
             return "\r\n".join(lists)
 
     def get_STAT(self, group_name, id):
@@ -229,7 +303,7 @@ class Papercut_Storage:
                 WHERE
                     forum_id=%s AND
                     post_id=%s""" % (settings.phpbb_table_prefix, forum_id, id)
-        return self.cursor.execute(stmt)
+        return self.query(stmt)
 
     def get_ARTICLE(self, group_name, id):
         forum_id = self.get_forum(group_name)
@@ -239,15 +313,15 @@ class Papercut_Storage:
                     A.post_id,
                     C.username,
                     C.user_email,
-                    CASE WHEN B.post_subject = '' THEN CONCAT('Re: ', E.topic_title) ELSE B.post_subject END,
+                    CASE WHEN A.post_subject = '' THEN CONCAT('Re: ', E.topic_title) ELSE A.post_subject END,
                     A.post_time,
-                    B.post_text,
+                    A.post_text,
                     A.topic_id,
                     A.post_username,
-                    MIN(D.post_id)
+                    MIN(D.post_id),
+                    A.poster_ip
                 FROM
-                    %sposts A,
-                    %sposts_text B
+                    %sposts A
                 INNER JOIN
                     %sposts D
                 ON
@@ -262,11 +336,10 @@ class Papercut_Storage:
                     A.poster_id=C.user_id
                 WHERE
                     A.forum_id=%s AND
-                    A.post_id=B.post_id AND
                     A.post_id=%s
                 GROUP BY
-                    D.topic_id""" % (prefix, prefix, prefix, prefix, prefix, forum_id, id)
-        num_rows = self.cursor.execute(stmt)
+                    D.topic_id""" % (prefix, prefix, prefix, prefix, forum_id, id)
+        num_rows = self.query(stmt)
         if num_rows == 0:
             return None
         result = list(self.cursor.fetchone())
@@ -275,7 +348,8 @@ class Papercut_Storage:
             if len(result[2]) == 0:
                 author = result[1]
             else:
-                author = "%s <%s>" % (result[1], result[2])
+                #author = "%s <%s>" % (result[1], result[2])
+                author = result[1]
         else:
             author = result[7]
         formatted_time = strutil.get_formatted_time(time.localtime(result[4]))
@@ -287,8 +361,11 @@ class Papercut_Storage:
         headers.append("Subject: %s" % (result[3]))
         headers.append("Message-ID: <%s@%s>" % (result[0], group_name))
         headers.append("Xref: %s %s:%s" % (settings.nntp_hostname, group_name, result[0]))
+        if result[9].strip()!='':
+            headers.append("NNTP-Posting-Host: %s" % (result[9].strip()))
         if result[8] != result[0]:
             headers.append("References: <%s@%s>" % (result[8], group_name))
+            headers.append("In-Reply-To: <%s@%s>" % (result[8], group_name))
         return ("\r\n".join(headers), strutil.format_body(result[5]))
 
     def get_LAST(self, group_name, current_id):
@@ -304,7 +381,7 @@ class Papercut_Storage:
                 ORDER BY
                     post_id DESC
                 LIMIT 0, 1""" % (settings.phpbb_table_prefix, current_id, forum_id)
-        num_rows = self.cursor.execute(stmt)
+        num_rows = self.query(stmt)
         if num_rows == 0:
             return None
         return self.cursor.fetchone()[0]
@@ -322,7 +399,7 @@ class Papercut_Storage:
                 ORDER BY
                     post_id ASC
                 LIMIT 0, 1""" % (settings.phpbb_table_prefix, forum_id, current_id)
-        num_rows = self.cursor.execute(stmt)
+        num_rows = self.query(stmt)
         if num_rows == 0:
             return None
         return self.cursor.fetchone()[0]
@@ -335,14 +412,13 @@ class Papercut_Storage:
                     A.post_id,
                     C.username,
                     C.user_email,
-                    CASE WHEN B.post_subject = '' THEN CONCAT('Re: ', E.topic_title) ELSE B.post_subject END,
+                    CASE WHEN A.post_subject = '' THEN CONCAT('Re: ', E.topic_title) ELSE A.post_subject END,
                     A.post_time,
                     A.topic_id,
                     A.post_username,
                     MIN(D.post_id)
                 FROM
-                    %sposts A,
-                    %sposts_text B
+                    %sposts A
                 INNER JOIN
                     %stopics E
                 ON
@@ -357,11 +433,10 @@ class Papercut_Storage:
                     A.poster_id=C.user_id
                 WHERE
                     A.forum_id=%s AND
-                    A.post_id=B.post_id AND
                     A.post_id=%s
                 GROUP BY
-                    D.topic_id""" % (prefix, prefix, prefix, prefix, prefix, forum_id, id)
-        num_rows = self.cursor.execute(stmt)
+                    D.topic_id""" % (prefix, prefix, prefix, prefix, forum_id, id)
+        num_rows = self.query(stmt)
         if num_rows == 0:
             return None
         result = list(self.cursor.fetchone())
@@ -370,7 +445,8 @@ class Papercut_Storage:
             if len(result[2]) == 0:
                 author = result[1]
             else:
-                author = "%s <%s>" % (result[1], result[2])
+                #author = "%s <%s>" % (result[1], result[2])
+                author = result[1]
         else:
             author = result[6]
         formatted_time = strutil.get_formatted_time(time.localtime(result[4]))
@@ -382,8 +458,10 @@ class Papercut_Storage:
         headers.append("Subject: %s" % (result[3]))
         headers.append("Message-ID: <%s@%s>" % (result[0], group_name))
         headers.append("Xref: %s %s:%s" % (settings.nntp_hostname, group_name, result[0]))
+        # because topics are all related in forums we can only reference the first topic
         if result[7] != result[0]:
             headers.append("References: <%s@%s>" % (result[7], group_name))
+            headers.append("In-Reply-To: <%s@%s>" % (result[7], group_name))
         return "\r\n".join(headers)
 
     def get_BODY(self, group_name, id):
@@ -391,15 +469,13 @@ class Papercut_Storage:
         prefix = settings.phpbb_table_prefix
         stmt = """
                 SELECT
-                    B.post_text
+                    A.post_text
                 FROM
-                    %sposts A,
-                    %sposts_text B
+                    %sposts A
                 WHERE
-                    A.post_id=B.post_id AND
                     A.forum_id=%s AND
-                    A.post_id=%s""" % (prefix, prefix, forum_id, id)
-        num_rows = self.cursor.execute(stmt)
+                    A.post_id=%s""" % (prefix, forum_id, id)
+        num_rows = self.query(stmt)
         if num_rows == 0:
             return None
         else:
@@ -408,19 +484,24 @@ class Papercut_Storage:
     def get_XOVER(self, group_name, start_id, end_id='ggg'):
         forum_id = self.get_forum(group_name)
         prefix = settings.phpbb_table_prefix
+        #print "xover startid=%s endid=%s\r\n" % (start_id, end_id)
         stmt = """
                 SELECT
                     A.post_id,
                     A.topic_id,
                     C.username,
                     C.user_email,
-                    CASE WHEN B.post_subject = '' THEN CONCAT('Re: ', D.topic_title) ELSE B.post_subject END,
+                    CASE WHEN A.post_subject = '' THEN CONCAT('Re: ', D.topic_title) ELSE A.post_subject END,
                     A.post_time,
-                    B.post_text,
-                    A.post_username
+                    A.post_text,
+                    A.post_username,
+                    E.MinPostID
                 FROM
-                    %sposts A, 
-                    %sposts_text B
+                    %sposts A
+                LEFT JOIN
+                    (select topic_id, MIN(post_id) as MinPostID from %sposts group by topic_id) E
+                ON
+                    E.topic_id=A.topic_id
                 LEFT JOIN
                     %susers C
                 ON
@@ -430,12 +511,11 @@ class Papercut_Storage:
                 ON
                     A.topic_id = D.topic_id
                 WHERE
-                    A.post_id=B.post_id AND
                     A.forum_id=%s AND
                     A.post_id >= %s""" % (prefix, prefix, prefix, prefix, forum_id, start_id)
         if end_id != 'ggg':
             stmt = "%s AND A.post_id <= %s" % (stmt, end_id)
-        self.cursor.execute(stmt)
+        self.query(stmt)
         result = list(self.cursor.fetchall())
         overviews = []
         for row in result:
@@ -443,15 +523,16 @@ class Papercut_Storage:
                 if row[3] == '':
                     author = row[2]
                 else:
-                    author = "%s <%s>" % (row[2], row[3])
+                    #author = "%s <%s>" % (row[2], row[3])
+                    author = row[2]
             else:
                 author = row[7]
             formatted_time = strutil.get_formatted_time(time.localtime(row[5]))
             message_id = "<%s@%s>" % (row[0], group_name)
             line_count = len(row[6].split('\n'))
             xref = 'Xref: %s %s:%s' % (settings.nntp_hostname, group_name, row[0])
-            if row[1] != row[0]:
-                reference = "<%s@%s>" % (row[1], group_name)
+            if row[8] != row[0]:
+                reference = "<%s@%s>" % (row[8], group_name)
             else:
                 reference = ""
             # message_number <tab> subject <tab> author <tab> date <tab> message_id <tab> reference <tab> bytes <tab> lines <tab> xref
@@ -469,13 +550,12 @@ class Papercut_Storage:
                     A.topic_id,
                     C.username,
                     C.user_email,
-                    CASE WHEN B.post_subject = '' THEN CONCAT('Re: ', D.topic_title) ELSE B.post_subject END,
+                    CASE WHEN A.post_subject = '' THEN CONCAT('Re: ', D.topic_title) ELSE A.post_subject END,
                     A.post_time,
-                    B.post_text,
+                    A.post_text,
                     A.post_username
                 FROM
-                    %sposts A, 
-                    %sposts_text B
+                    %sposts A
                 LEFT JOIN
                     %susers C
                 ON
@@ -487,11 +567,10 @@ class Papercut_Storage:
                 WHERE
                     A.forum_id=%s AND
                     %s REGEXP '%s' AND
-                    A.post_id = B.post_id AND
-                    A.post_id >= %s""" % (prefix, prefix, prefix, prefix, forum_id, header, strutil.format_wildcards(pattern), start_id)
+                    A.post_id >= %s""" % (prefix, prefix, prefix, forum_id, header, strutil.format_wildcards(pattern), start_id)
         if end_id != 'ggg':
             stmt = "%s AND A.post_id <= %s" % (stmt, end_id)
-        num_rows = self.cursor.execute(stmt)
+        num_rows = self.query(stmt)
         if num_rows == 0:
             return None
         result = list(self.cursor.fetchall())
@@ -500,8 +579,16 @@ class Papercut_Storage:
             if header.upper() == 'SUBJECT':
                 hdrs.append('%s %s' % (row[0], row[4]))
             elif header.upper() == 'FROM':
+                if row[7] == '':
+                    if row[3] == '':
+                        author = row[2]
+                    else:
+                        #author = "%s <%s>" % (row[2], row[3])
+                        author = row[2]
+                else:
+                    author = row[7]
                 # XXX: totally broken with empty values for the email address
-                hdrs.append('%s %s <%s>' % (row[0], row[2], row[3]))
+                hdrs.append('%s %s' % (row[0], author))
             elif header.upper() == 'DATE':
                 hdrs.append('%s %s' % (row[0], strutil.get_formatted_time(time.localtime(result[5]))))
             elif header.upper() == 'MESSAGE-ID':
@@ -530,7 +617,7 @@ class Papercut_Storage:
                     forum_id=%s
                 ORDER BY
                     post_id ASC""" % (settings.phpbb_table_prefix, forum_id)
-        self.cursor.execute(stmt)
+        self.query(stmt)
         result = list(self.cursor.fetchall())
         return "\r\n".join(["%s" % k for k in result])
 
@@ -549,7 +636,7 @@ class Papercut_Storage:
         stmt = stmt + """
                 ORDER BY
                     nntp_group_name ASC"""
-        self.cursor.execute(stmt)
+        self.query(stmt)
         result = list(self.cursor.fetchall())
         return "\r\n".join(["%s %s" % (k, v) for k, v in result])
 
@@ -562,13 +649,12 @@ class Papercut_Storage:
                     A.topic_id,
                     D.username,
                     D.user_email,
-                    CASE WHEN B.post_subject = '' THEN CONCAT('Re: ', C.topic_title) ELSE B.post_subject END,
+                    CASE WHEN A.post_subject = '' THEN CONCAT('Re: ', C.topic_title) ELSE A.post_subject END,
                     A.post_time,
-                    B.post_text,
+                    A.post_text,
                     A.post_username
                 FROM
-                    %sposts A,
-                    %sposts_text B
+                    %sposts A
                 LEFT JOIN
                     %stopics C
                 ON
@@ -579,14 +665,14 @@ class Papercut_Storage:
                     A.poster_id=D.user_id
                 WHERE
                     A.forum_id=%s AND
-                    A.post_id = B.post_id AND """ % (prefix, prefix, prefix, prefix, forum_id)
+                    """ % (prefix, prefix, prefix, forum_id)
         if style == 'range':
             stmt = '%s A.post_id >= %s' % (stmt, range[0])
             if len(range) == 2:
                 stmt = '%s AND A.post_id <= %s' % (stmt, range[1])
         else:
             stmt = '%s A.post_id = %s' % (stmt, range[0])
-        if self.cursor.execute(stmt) == 0:
+        if self.query(stmt) == 0:
             return None
         result = self.cursor.fetchall()
         hdrs = []
@@ -594,7 +680,15 @@ class Papercut_Storage:
             if header.upper() == 'SUBJECT':
                 hdrs.append('%s %s' % (row[0], row[4]))
             elif header.upper() == 'FROM':
-                hdrs.append('%s %s <%s>' % (row[0], row[2], row[3]))
+                if row[7] == '':
+                    if row[3] == '':
+                        author = row[2]
+                    else:
+                        #author = "%s <%s>" % (row[2], row[3])
+                        author = row[2]
+                else:
+                    author = row[7]
+                hdrs.append('%s %s' % (row[0], author))
             elif header.upper() == 'DATE':
                 hdrs.append('%s %s' % (row[0], strutil.get_formatted_time(time.localtime(result[5]))))
             elif header.upper() == 'MESSAGE-ID':
@@ -628,16 +722,33 @@ class Papercut_Storage:
                     FROM
                         %susers
                     WHERE
-                        username='%s'""" % (prefix, username)
-            num_rows = self.cursor.execute(stmt)
+                        username_clean='%s'""" % (prefix, self.quote_string(username.lower().strip()))
+            num_rows = self.query(stmt)
             if num_rows == 0:
-                poster_id = -1
+                poster_id = 0
+                post_username = username
             else:
                 poster_id = self.cursor.fetchone()[0]
-            post_username = ''
+                # use name and email provided by news client
+                if email!='':
+                  post_username = "%s <%s>" % (author, email)
+                else:
+                  post_username = author
+                # post_username = ''
         else:
-            poster_id = -1
-            post_username = author
+            poster_id = 0
+            if email!='':
+              post_username = "%s <%s>" % (author, email)
+            else:
+              post_username = author
+
+        # check if user can post
+        if self.ip_allowed(ip_address)==0:
+            return 2
+
+        if self.check_permission(forum_id, poster_id, 'f_post')==0:
+            return 2
+
         if lines.find('References') != -1:
             # get the 'modifystamp' value from the parent (if any)
             references = references_regexp.search(lines, 0).groups()
@@ -650,8 +761,8 @@ class Papercut_Storage:
                     WHERE
                         post_id=%s
                     GROUP BY
-                        post_id""" % (prefix, parent_id)
-            num_rows = self.cursor.execute(stmt)
+                        post_id""" % (prefix, self.quote_string(parent_id))
+            num_rows = self.query(stmt)
             if num_rows == 0:
                 return None
             thread_id = self.cursor.fetchone()[0]
@@ -666,7 +777,6 @@ class Papercut_Storage:
                         topic_poster,
                         topic_time,
                         topic_status,
-                        topic_vote,
                         topic_type
                     ) VALUES (
                         %s,
@@ -674,11 +784,11 @@ class Papercut_Storage:
                         %s,
                         UNIX_TIMESTAMP(),
                         0,
-                        0,
                         0
                     )""" % (prefix, forum_id, self.quote_string(subject), poster_id)
-            self.cursor.execute(stmt)
-            thread_id = self.cursor.insert_id()
+            self.query(stmt)
+            thread_id = self.cursor.lastrowid
+
         stmt = """
                 INSERT INTO
                     %sposts
@@ -689,10 +799,11 @@ class Papercut_Storage:
                     post_time,
                     poster_ip,
                     post_username,
-                    enable_bbcode,
-                    enable_html,
-                    enable_smilies,
-                    enable_sig
+                    post_subject,
+                    post_text,
+                    enable_magic_url,
+                    enable_sig,
+                    bbcode_uid
                 ) VALUES (
                     %s,
                     %s,
@@ -700,101 +811,138 @@ class Papercut_Storage:
                     UNIX_TIMESTAMP(),
                     '%s',
                     '%s',
-                    1,
+                    '%s',
+                    '%s',
                     0,
-                    1,
-                    0
-                )""" % (prefix, thread_id, forum_id, poster_id, self.encode_ip(ip_address), post_username)
-        self.cursor.execute(stmt)
-        new_id = self.cursor.insert_id()
+                    0,
+                    '%s'
+                )""" % (prefix, thread_id, forum_id, poster_id, ip_address, self.quote_string(post_username), self.quote_string(subject),self.quote_string(body), self.make_bbcode_uid())
+        self.query(stmt)
+        new_id = self.cursor.lastrowid
         if not new_id:
-            return None
-        else:
-            # insert into the '*posts_text' table
-            stmt = """
-                    INSERT INTO
-                        %sposts_text
-                    (
-                        post_id,
-                        bbcode_uid,
-                        post_subject,
-                        post_text
-                    ) VALUES (
-                        %s,
-                        '%s',
-                        '%s',
-                        '%s'
-                    )""" % (prefix, new_id, self.make_bbcode_uid(), self.quote_string(subject), self.quote_string(body))
-            if not self.cursor.execute(stmt):
+            if lines.find('References') == -1:
                 # delete from 'topics' and 'posts' tables before returning...
                 stmt = """
                         DELETE FROM
                             %stopics
                         WHERE
                             topic_id=%s""" % (prefix, thread_id)
-                self.cursor.execute(stmt)
+                self.query(stmt)
+            return None
+        else:
+            if lines.find('References') != -1:
+                # update the total number of posts in the forum
                 stmt = """
-                        DELETE FROM
-                            %sposts
+                        UPDATE
+                            %sforums
+                        SET
+                            forum_posts=forum_posts+1,
+                            forum_last_post_id=%s,
+                            forum_last_poster_id=%s,
+                            forum_last_post_subject='%s',
+                            forum_last_post_time=UNIX_TIMESTAMP(),
+                            forum_last_poster_name='%s'
                         WHERE
-                            post_id=%s""" % (prefix, new_id)
-                self.cursor.execute(stmt)
-                return None
+                            forum_id=%s
+                        """ % (prefix, new_id, poster_id, self.quote_string(subject), self.quote_string(post_username), forum_id)
+                self.query(stmt)
             else:
-                if lines.find('References') != -1:
-                    # update the total number of posts in the forum
-                    stmt = """
-                            UPDATE
-                                %sforums
-                            SET
-                                forum_posts=forum_posts+1,
-                                forum_last_post_id=%s
-                            WHERE
-                                forum_id=%s
-                            """ % (settings.phpbb_table_prefix, new_id, forum_id)
-                    self.cursor.execute(stmt)
-                else:
-                    # update the total number of topics and posts in the forum
-                    stmt = """
-                            UPDATE
-                                %sforums
-                            SET
-                                forum_topics=forum_topics+1,
-                                forum_posts=forum_posts+1,
-                                forum_last_post_id=%s
-                            WHERE
-                                forum_id=%s
-                            """ % (settings.phpbb_table_prefix, new_id, forum_id)
-                    self.cursor.execute(stmt)
-                # update the user's post count, if this is indeed a real user
-                if poster_id != -1:
-                    stmt = """
-                            UPDATE
-                                %susers
-                            SET
-                                user_posts=user_posts+1
-                            WHERE
-                                user_id=%s""" % (prefix, poster_id)
-                    self.cursor.execute(stmt)
-                # setup last post on the topic thread (Patricio Anguita <pda@ing.puc.cl>)
+                # create the topics posted record
+                stmt = """
+                        INSERT INTO
+                            %stopics_posted
+                       (
+                            user_id,
+                            topic_id,
+                            topic_posted
+                       ) VALUES (
+                            %s,
+                            %s,
+                            1
+                       )""" % (prefix, poster_id, thread_id)
+                self.query(stmt)
+
+
+                # update the total number of topics and posts in the forum
+                stmt = """
+                        UPDATE
+                            %sforums
+                        SET
+                            forum_topics=forum_topics+1,
+                            forum_topics_real=forum_topics_real+1,
+                            forum_posts=forum_posts+1,
+                            forum_last_post_id=%s,
+                            forum_last_poster_id=%s,
+                            forum_last_post_subject='%s',
+                            forum_last_post_time=UNIX_TIMESTAMP(),
+                            forum_last_poster_name='%s'
+                        WHERE
+                            forum_id=%s
+                        """ % (prefix, new_id, poster_id, self.quote_string(subject), self.quote_string(post_username), forum_id)
+                self.query(stmt)
+            # update the user's post count, if this is indeed a real user
+            if poster_id != -1:
+                stmt = """
+                        UPDATE
+                            %susers
+                        SET
+                            user_posts=user_posts+1,
+                            user_lastpost_time=UNIX_TIMESTAMP()
+                        WHERE
+                            user_id=%s""" % (prefix, poster_id)
+                self.query(stmt)
+            # setup last post on the topic thread (Patricio Anguita <pda@ing.puc.cl>)
+            if lines.find('References') != -1:
+                incval='1'
+            else:
+                incval='0'
+
+            stmt = """
+                    UPDATE
+                        %stopics
+                    SET
+                        topic_replies=topic_replies+%s,
+                        topic_replies_real=topic_replies_real+%s,
+                        topic_last_post_id=%s,
+                        topic_last_poster_id=%s,
+                        topic_last_poster_name='%s',
+                        topic_last_post_subject='%s',
+                        topic_last_post_time=UNIX_TIMESTAMP()
+                    WHERE
+                        topic_id=%s""" % (prefix, incval, incval, new_id, poster_id, self.quote_string(post_username), self.quote_string(subject), thread_id)
+            self.query(stmt)
+            # if this is the first post on the thread.. (Patricio Anguita <pda@ing.puc.cl>)
+            if lines.find('References') == -1:
                 stmt = """
                         UPDATE
                             %stopics
                         SET
-                            topic_replies=topic_replies+1,
-                            topic_last_post_id=%s
+                            topic_first_post_id=%s,
+                            topic_first_poster_name='%s'
                         WHERE
-                            topic_id=%s""" % (prefix, new_id, thread_id)
-                self.cursor.execute(stmt)
-                # if this is the first post on the thread.. (Patricio Anguita <pda@ing.puc.cl>)
-                if lines.find('References') == -1:
-                    stmt = """
-                            UPDATE
-                                %stopics
-                            SET
-                                topic_first_post_id=%s
-                            WHERE
-                                topic_id=%s AND
-                                topic_first_post_id=0""" % (prefix, new_id, thread_id)
-                    self.cursor.execute(stmt)
+                            topic_id=%s AND
+                            topic_first_post_id=0""" % (prefix, new_id, self.quote_string(post_username), thread_id)
+                self.query(stmt)
+            return 1
+
+    def is_valid_user(self, username, password):
+        stmt = """
+                SELECT
+                    user_password
+                FROM
+                    %susers
+                WHERE
+                    username='%s'
+                """ % (settings.phpbb_table_prefix, self.quote_string(username))
+        num_rows = self.query(stmt)
+
+        if num_rows == 0 or num_rows is None:
+            settings.logEvent('Error - Authentication failed for username \'%s\' (user not found)' % (username))
+            return 0
+        else:
+            db_password = self.cursor.fetchone()[0]
+            if db_password != phpass.crypt_private(password, db_password, '$H$'):
+                settings.logEvent('Error - Authentication failed for username \'%s\' (incorrect password)' % (username))
+                return 0
+            else:
                 return 1

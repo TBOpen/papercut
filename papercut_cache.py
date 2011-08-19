@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 # Copyright (c) 2002 Joao Prado Maia. See the LICENSE file for more information.
-# $Id: papercut_cache.py,v 1.7 2002-10-04 03:14:38 jpm Exp $
+# $Id: papercut_cache.py,v 1.7 2002/10/04 03:14:38 jpm Exp $
 
 import binascii
-import md5
+from hashlib import md5
 import time
 import os
 import cPickle
@@ -44,7 +44,7 @@ class CallableWrapper:
                 else:
                     return result
             else:
-                return self._save_result(filename, *args, **kwds) 
+                return self._save_result(filename, *args, **kwds)
 
     def _get_cached_result(self, filename):
         inf = open(filename, 'rb')
@@ -72,7 +72,7 @@ class CallableWrapper:
 
     def _get_filename(self, *args, **kwds):
         arguments = '%s%s%s' % (self.name, args, kwds)
-        return '%s%s' % (settings.nntp_cache_path, binascii.hexlify(md5.new(arguments).digest()))
+        return '%s%s' % (settings.nntp_cache_path, binascii.hexlify(md5(arguments).digest()))
 
 
 class Cache:

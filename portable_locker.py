@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# $Id: portable_locker.py,v 1.2 2002-10-03 01:05:24 jpm Exp $
+# $Id: portable_locker.py,v 1.2 2002/10/03 01:05:24 jpm Exp $
 
 # Note: this was originally from Python Cookbook, which was 
 # probably taken from ASPN's Python Cookbook

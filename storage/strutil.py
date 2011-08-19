@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # Copyright (c) 2002 Joao Prado Maia. See the LICENSE file for more information.
-# $Id: strutil.py,v 1.3 2003-02-22 00:46:18 jpm Exp $
+# $Id: strutil.py,v 1.3 2003/02/22 00:46:18 jpm Exp $
 import time
 import re
 

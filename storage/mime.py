@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # Copyright (c) 2002 Joao Prado Maia. See the LICENSE file for more information.
-# $Id: mime.py,v 1.1 2002-02-03 06:15:25 jpm Exp $
+# $Id: mime.py,v 1.1 2002/02/03 06:15:25 jpm Exp $
 import re
 import email
 
@@ -19,7 +19,7 @@ def get_body(subpart):
 
 def get_text_message(msg_string):
     msg = email.message_from_string(msg_string)
-    cnt_type = msg.get_main_type()
+    cnt_type = msg.get_content_maintype()
     if cnt_type == 'text':
         # a simple mime based text/plain message (is this even possible?)
         body = get_body(msg_string)

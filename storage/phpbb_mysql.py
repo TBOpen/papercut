@@ -182,10 +182,12 @@ class Papercut_Storage:
                 FROM %sforums AS f
                 INNER JOIN %susers AS u
                 ON u.user_id=%s
+                INNER JOIN %suser_group as mg
+                ON mg.user_id=u.user_id
                 LEFT OUTER JOIN %sacl_users AS aa
                 ON f.forum_id=aa.forum_id AND aa.user_id=u.user_id AND (aa.auth_option_id=0 OR aa.auth_setting=1)
                 LEFT OUTER JOIN %sacl_groups AS ug
-                ON f.forum_id=ug.forum_id AND ug.group_id=u.group_id AND (ug.auth_option_id=0 OR ug.auth_setting=1)
+                ON f.forum_id=ug.forum_id AND (mg.group_id=ug.group_id OR ug.group_id=u.group_id) AND (ug.auth_option_id=0 OR ug.auth_setting=1)
                 LEFT OUTER JOIN %sacl_roles_data as ard
                 ON ard.auth_setting=1 AND
                   ((aa.auth_option_id=0 AND aa.auth_role_id=ard.role_id) OR
@@ -195,7 +197,7 @@ class Papercut_Storage:
                  (aa.auth_option_id=ao.auth_option_id OR ard.auth_option_id=ao.auth_option_id OR
                   (ISNULL(aa.auth_setting) AND ug.auth_option_id=ao.auth_option_id))
                 WHERE f.forum_id=%s
-               """ % (prefix, prefix, user_id, prefix, prefix, prefix, prefix, permission, forum_id)
+               """ % (prefix, prefix, user_id, prefix, prefix, prefix, prefix, prefix, permission, forum_id)
         if self.query(stmt)==0:
             return 0
         return 1
@@ -251,10 +253,12 @@ class Papercut_Storage:
                    FROM %sforums AS f
                    INNER JOIN %susers AS u
                    ON u.username_clean='%s'
+                   INNER JOIN %suser_group as mg
+                   ON mg.user_id=u.user_id
                    LEFT OUTER JOIN %sacl_users AS aa
                    ON f.forum_id=aa.forum_id AND aa.user_id=u.user_id AND (aa.auth_option_id=0 OR aa.auth_setting=1)
                    LEFT OUTER JOIN %sacl_groups AS ug
-                   ON f.forum_id=ug.forum_id AND ug.group_id=u.group_id AND (ug.auth_option_id=0 OR ug.auth_setting=1)
+                   ON f.forum_id=ug.forum_id AND (mg.group_id=ug.group_id OR ug.group_id=u.group_id) AND (ug.auth_option_id=0 OR ug.auth_setting=1)
                    LEFT OUTER JOIN %sacl_roles_data as ard
                    ON ard.auth_setting=1 AND
                      ((aa.auth_option_id=0 AND aa.auth_role_id=ard.role_id) OR
@@ -265,7 +269,7 @@ class Papercut_Storage:
                      (ISNULL(aa.auth_setting) AND ug.auth_option_id=ao.auth_option_id))
                    WHERE LENGTH(f.nntp_group_name) > 0
                    ORDER BY f.nntp_group_name ASC
-                   """ % (settings.phpbb_table_prefix, settings.phpbb_table_prefix, username.lower().strip(), settings.phpbb_table_prefix, settings.phpbb_table_prefix, settings.phpbb_table_prefix, settings.phpbb_table_prefix)
+                   """ % (settings.phpbb_table_prefix, settings.phpbb_table_prefix, username.lower().strip(), settings.phpbb_table_prefix, settings.phpbb_table_prefix, settings.phpbb_table_prefix, settings.phpbb_table_prefix, settings.phpbb_table_prefix)
         else:
             stmt = """
                    SELECT

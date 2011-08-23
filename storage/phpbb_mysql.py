@@ -845,7 +845,8 @@ class Papercut_Storage:
                             forum_last_poster_id=%s,
                             forum_last_post_subject='%s',
                             forum_last_post_time=UNIX_TIMESTAMP(),
-                            forum_last_poster_name='%s'
+                            forum_last_poster_name='%s',
+                            forum_last_poster_colour='AAAA00'
                         WHERE
                             forum_id=%s
                         """ % (prefix, new_id, poster_id, self.quote_string(subject), self.quote_string(post_username), forum_id)
@@ -910,6 +911,7 @@ class Papercut_Storage:
                         topic_last_post_id=%s,
                         topic_last_poster_id=%s,
                         topic_last_poster_name='%s',
+                        topic_last_poster_colour='AAAA00',
                         topic_last_post_subject='%s',
                         topic_last_post_time=UNIX_TIMESTAMP()
                     WHERE

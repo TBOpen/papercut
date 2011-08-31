@@ -175,6 +175,29 @@ class Papercut_Storage:
             return 1
         return 0
 
+    def get_poster_color(self, user_id):
+        color=''
+        prefix = settings.phpbb_table_prefix
+        stmt = """
+               SELECT group_id
+               FROM %susers AS u
+               WHERE u.user_id=%s
+               UNION SELECT group_id
+               FROM %suser_group as ug
+               WHERE ug.user_id=%s
+               """ % (prefix, user_id, prefix, user_id)
+        if self.query(stmt)==0:
+            return color
+
+        result = self.cursor.fetchall()
+        for row in result:
+            if row[0]==5:
+                color='AA0000'
+            elif (color=='') and (row[0]==4):
+                color='00AA00'
+
+        return color
+
     def check_permission(self, forum_id, user_id, permission):
         prefix = settings.phpbb_table_prefix
         stmt = """
@@ -753,6 +776,8 @@ class Papercut_Storage:
         if self.check_permission(forum_id, poster_id, 'f_post')==0:
             return 2
 
+        postercolor=self.get_poster_color(poster_id)
+
         if lines.find('References') != -1:
             # get the 'modifystamp' value from the parent (if any)
             references = references_regexp.search(lines, 0).groups()
@@ -846,10 +871,10 @@ class Papercut_Storage:
                             forum_last_post_subject='%s',
                             forum_last_post_time=UNIX_TIMESTAMP(),
                             forum_last_poster_name='%s',
-                            forum_last_poster_colour='AAAA00'
+                            forum_last_poster_colour='%s'
                         WHERE
                             forum_id=%s
-                        """ % (prefix, new_id, poster_id, self.quote_string(subject), self.quote_string(post_username), forum_id)
+                        """ % (prefix, new_id, poster_id, self.quote_string(subject), self.quote_string(post_username), postercolor, forum_id)
                 self.query(stmt)
             else:
                 # create the topics posted record
@@ -880,10 +905,11 @@ class Papercut_Storage:
                             forum_last_poster_id=%s,
                             forum_last_post_subject='%s',
                             forum_last_post_time=UNIX_TIMESTAMP(),
-                            forum_last_poster_name='%s'
+                            forum_last_poster_name='%s',
+                            forum_last_poster_colour='%s'
                         WHERE
                             forum_id=%s
-                        """ % (prefix, new_id, poster_id, self.quote_string(subject), self.quote_string(post_username), forum_id)
+                        """ % (prefix, new_id, poster_id, self.quote_string(subject), self.quote_string(post_username), postercolor, forum_id)
                 self.query(stmt)
             # update the user's post count, if this is indeed a real user
             if poster_id != -1:
@@ -911,11 +937,11 @@ class Papercut_Storage:
                         topic_last_post_id=%s,
                         topic_last_poster_id=%s,
                         topic_last_poster_name='%s',
-                        topic_last_poster_colour='AAAA00',
+                        topic_last_poster_colour='%s',
                         topic_last_post_subject='%s',
                         topic_last_post_time=UNIX_TIMESTAMP()
                     WHERE
-                        topic_id=%s""" % (prefix, incval, incval, new_id, poster_id, self.quote_string(post_username), self.quote_string(subject), thread_id)
+                        topic_id=%s""" % (prefix, incval, incval, new_id, poster_id, self.quote_string(post_username), postercolor, self.quote_string(subject), thread_id)
             self.query(stmt)
             # if this is the first post on the thread.. (Patricio Anguita <pda@ing.puc.cl>)
             if lines.find('References') == -1:
@@ -924,10 +950,11 @@ class Papercut_Storage:
                             %stopics
                         SET
                             topic_first_post_id=%s,
-                            topic_first_poster_name='%s'
+                            topic_first_poster_name='%s',
+                            topic_first_poster_colour='%s'
                         WHERE
                             topic_id=%s AND
-                            topic_first_post_id=0""" % (prefix, new_id, self.quote_string(post_username), thread_id)
+                            topic_first_post_id=0""" % (prefix, new_id, self.quote_string(post_username), postercolor, thread_id)
                 self.query(stmt)
             return 1
 

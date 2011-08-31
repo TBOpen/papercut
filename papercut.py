@@ -14,7 +14,7 @@ import StringIO
 import settings
 import papercut_cache
 
-__VERSION__ = '0.9.15'
+__VERSION__ = '0.9.16'
 # set this to 0 (zero) for real world use
 __DEBUG__ = 0
 # how many seconds to wait for data from the clients (draft 20 of the new NNTP protocol says at least 3 minutes)
@@ -177,9 +177,9 @@ class NNTPRequestHandler(SocketServer.StreamRequestHandler):
             # NNTP commands are case-insensitive
             command = self.tokens[0].upper()
             # don't save the password in the log file
-            match = authinfo_regexp.search(line)
-            if not match:
-              settings.logEvent('Received request: %s' % (line))
+            #match = authinfo_regexp.search(line)
+            #if not match:
+            #  settings.logEvent('Received request: %s' % (line))
             if command != 'AUTHINFO':
               self.tokens = line.split(' ')
             if command == 'POST':

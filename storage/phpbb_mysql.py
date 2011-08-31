@@ -778,7 +778,9 @@ class Papercut_Storage:
 
         postercolor=self.get_poster_color(poster_id)
 
-        if lines.find('References') != -1:
+        replying=lines.find('References') != -1
+
+        if replying:
             # get the 'modifystamp' value from the parent (if any)
             references = references_regexp.search(lines, 0).groups()
             parent_id, void = references[-1].strip().split('@')
@@ -795,7 +797,18 @@ class Papercut_Storage:
             if num_rows == 0:
                 return None
             thread_id = self.cursor.fetchone()[0]
-        else:
+
+            # check if topic locked
+            stmt = """
+                    SELECT topic_status
+                    FROM %stopics
+                    WHERE topic_id=%s AND topic_status=0
+                   """ % (prefix, thread_id)
+            if self.query(stmt) == 0:
+                # create new topic instead
+                replying=0
+
+        if not replying:
             # create a new topic
             stmt = """
                     INSERT INTO
@@ -849,7 +862,7 @@ class Papercut_Storage:
         self.query(stmt)
         new_id = self.cursor.lastrowid
         if not new_id:
-            if lines.find('References') == -1:
+            if not replying:
                 # delete from 'topics' and 'posts' tables before returning...
                 stmt = """
                         DELETE FROM
@@ -859,7 +872,7 @@ class Papercut_Storage:
                 self.query(stmt)
             return None
         else:
-            if lines.find('References') != -1:
+            if replying:
                 # update the total number of posts in the forum
                 stmt = """
                         UPDATE
@@ -923,7 +936,7 @@ class Papercut_Storage:
                             user_id=%s""" % (prefix, poster_id)
                 self.query(stmt)
             # setup last post on the topic thread (Patricio Anguita <pda@ing.puc.cl>)
-            if lines.find('References') != -1:
+            if replying:
                 incval='1'
             else:
                 incval='0'
@@ -944,7 +957,7 @@ class Papercut_Storage:
                         topic_id=%s""" % (prefix, incval, incval, new_id, poster_id, self.quote_string(post_username), postercolor, self.quote_string(subject), thread_id)
             self.query(stmt)
             # if this is the first post on the thread.. (Patricio Anguita <pda@ing.puc.cl>)
-            if lines.find('References') == -1:
+            if not replying:
                 stmt = """
                         UPDATE
                             %stopics

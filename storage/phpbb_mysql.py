@@ -111,7 +111,7 @@ class Papercut_Storage:
                 FROM
                     %sposts
                 WHERE
-                    forum_id=%s""" % (settings.phpbb_table_prefix, forum_id)
+                    (forum_id=%s OR forum_id=0)""" % (settings.phpbb_table_prefix, forum_id)
         if style == 'range':
             stmt = "%s AND post_id > %s" % (stmt, range[0])
             if len(range) == 2:
@@ -129,7 +129,7 @@ class Papercut_Storage:
                 FROM
                     %sposts
                 WHERE
-                    forum_id=%s""" % (settings.phpbb_table_prefix, forum_id)
+                    (forum_id=%s or forum_id=0)""" % (settings.phpbb_table_prefix, forum_id)
         num_rows = self.query(stmt)
         return self.cursor.fetchone()[0]
 
@@ -146,7 +146,7 @@ class Papercut_Storage:
                 FROM
                     %sposts
                 WHERE
-                    forum_id=%s""" % (settings.phpbb_table_prefix, forum_id)
+                    (forum_id=%s OR forum_id=0)""" % (settings.phpbb_table_prefix, forum_id)
         num_rows = self.query(stmt)
         return self.cursor.fetchone()
 
@@ -250,7 +250,7 @@ class Papercut_Storage:
                     FROM
                         %sposts
                     WHERE
-                        forum_id=%s AND
+                        (forum_id=%s OR forum_id=0) AND
                         post_time >= %s""" % (settings.phpbb_table_prefix, forum_id, ts)
             num_rows = self.query(stmt)
             if num_rows == 0:
@@ -328,7 +328,7 @@ class Papercut_Storage:
                 FROM
                     %sposts
                 WHERE
-                    forum_id=%s AND
+                    (forum_id=%s OR forum_id=0) AND
                     post_id=%s""" % (settings.phpbb_table_prefix, forum_id, id)
         return self.query(stmt)
 
@@ -362,7 +362,7 @@ class Papercut_Storage:
                 ON
                     A.poster_id=C.user_id
                 WHERE
-                    A.forum_id=%s AND
+                    (A.forum_id=%s OR A.forum_id=0) AND
                     A.post_id=%s
                 GROUP BY
                     D.topic_id""" % (prefix, prefix, prefix, prefix, forum_id, id)
@@ -404,7 +404,7 @@ class Papercut_Storage:
                     %sposts
                 WHERE
                     post_id < %s AND
-                    forum_id=%s
+                    (forum_id=%s OR forum_id=0)
                 ORDER BY
                     post_id DESC
                 LIMIT 0, 1""" % (settings.phpbb_table_prefix, current_id, forum_id)
@@ -421,7 +421,7 @@ class Papercut_Storage:
                 FROM
                     %sposts
                 WHERE
-                    forum_id=%s AND
+                    (forum_id=%s or forum_id=0) AND
                     post_id > %s
                 ORDER BY
                     post_id ASC
@@ -459,7 +459,7 @@ class Papercut_Storage:
                 ON
                     A.poster_id=C.user_id
                 WHERE
-                    A.forum_id=%s AND
+                    (A.forum_id=%s OR A.forum_id=0) AND
                     A.post_id=%s
                 GROUP BY
                     D.topic_id""" % (prefix, prefix, prefix, prefix, forum_id, id)
@@ -500,7 +500,7 @@ class Papercut_Storage:
                 FROM
                     %sposts A
                 WHERE
-                    A.forum_id=%s AND
+                    (A.forum_id=%s OR A.forum_id=0) AND
                     A.post_id=%s""" % (prefix, forum_id, id)
         num_rows = self.query(stmt)
         if num_rows == 0:
@@ -538,7 +538,7 @@ class Papercut_Storage:
                 ON
                     A.topic_id = D.topic_id
                 WHERE
-                    A.forum_id=%s AND
+                    (A.forum_id=%s OR A.forum_id=0) AND
                     A.post_id >= %s""" % (prefix, prefix, prefix, prefix, forum_id, start_id)
         if end_id != 'ggg':
             stmt = "%s AND A.post_id <= %s" % (stmt, end_id)
@@ -592,7 +592,7 @@ class Papercut_Storage:
                 ON
                     A.topic_id = D.topic_id
                 WHERE
-                    A.forum_id=%s AND
+                    (A.forum_id=%s OR A.forum_id=0) AND
                     %s REGEXP '%s' AND
                     A.post_id >= %s""" % (prefix, prefix, prefix, forum_id, header, strutil.format_wildcards(pattern), start_id)
         if end_id != 'ggg':
@@ -641,7 +641,7 @@ class Papercut_Storage:
                 FROM
                     %sposts
                 WHERE
-                    forum_id=%s
+                    (forum_id=%s OR forum_id=0)
                 ORDER BY
                     post_id ASC""" % (settings.phpbb_table_prefix, forum_id)
         self.query(stmt)
@@ -691,7 +691,7 @@ class Papercut_Storage:
                 ON
                     A.poster_id=D.user_id
                 WHERE
-                    A.forum_id=%s AND
+                    (A.forum_id=%s OR A.forum_id=0) AND
                     """ % (prefix, prefix, prefix, forum_id)
         if style == 'range':
             stmt = '%s A.post_id >= %s' % (stmt, range[0])

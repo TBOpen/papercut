@@ -3,12 +3,14 @@
 # $Id: strutil.py,v 1.3 2003/02/22 00:46:18 jpm Exp $
 import time
 import re
+import html2text
+from BeautifulSoup import BeautifulSoup
 
 singleline_regexp = re.compile("^\.", re.M)
 
 def wrap(text, width=78):
     """Wraps text at a specified width.
-        
+
     This is used on the PhorumMail feature, as to emulate completely the
     current Phorum behavior when it sends out copies of the posted
     articles.
@@ -35,7 +37,7 @@ def wrap(text, width=78):
 
 def get_formatted_time(time_tuple):
     """Formats the time tuple in a NNTP friendly way.
-    
+
     Some newsreaders didn't like the date format being sent using leading
     zeros on the days, so we needed to hack our own little format.
     """
@@ -47,12 +49,16 @@ def get_formatted_time(time_tuple):
 
 def format_body(text):
     """Formats the body of message being sent to the client.
-    
+
     Since the NNTP protocol uses a single dot on a line to denote the end
     of the response, we need to substitute all leading dots on the body of
     the message with two dots.
     """
-    return singleline_regexp.sub("..", text)
+    soup = BeautifulSoup(text)
+    h = html2text.HTML2Text()
+    h.body_width = 0
+    h.leave_newline = True
+    return singleline_regexp.sub("..", h.handle(soup.prettify()))
 
 def format_wildcards(pattern):
     return pattern.replace('*', '.*').replace('?', '.*')

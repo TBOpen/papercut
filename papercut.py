@@ -882,7 +882,7 @@ class NNTPRequestHandler(SocketServer.StreamRequestHandler):
     def send_response(self, message):
         if __DEBUG__:
             print "server>", message
-        self.wfile.write(message + "\r\n")
+        self.wfile.write(message.encode('ascii', 'replace') + "\r\n")
         self.wfile.flush()
 
     def finish(self):

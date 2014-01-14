@@ -407,7 +407,7 @@ class NNTPRequestHandler(SocketServer.StreamRequestHandler):
             if len(self.tokens) == 2 and self.tokens[1].find('<') == -1:
                 self.selected_article = self.tokens[1]
             response = STATUS_ARTICLE % (report_article_number, self.backend.get_message_id(self.selected_article, self.selected_group))
-            self.send_response("%s\r\n%s\r\n\r\n%s\r\n." % (response, result[0], result[1]))
+            self.send_response("%s\r\n%s\r\n\r\n%s\r\n." % (response, result[0], result[1].encode('ascii', 'replace')))
 
     def do_LAST(self):
         """
@@ -882,7 +882,7 @@ class NNTPRequestHandler(SocketServer.StreamRequestHandler):
     def send_response(self, message):
         if __DEBUG__:
             print "server>", message
-        self.wfile.write(message.encode('ascii', 'replace') + "\r\n")
+        self.wfile.write(message.decode('cp1250', 'replace').encode('ascii', 'replace') + "\r\n")
         self.wfile.flush()
 
     def finish(self):

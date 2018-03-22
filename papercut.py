@@ -129,6 +129,7 @@ class NNTPRequestHandler(SocketServer.StreamRequestHandler):
     def handle_timeout(self, signum, frame):
         self.terminated = 1
         settings.logEvent('Connection timed out from %s' % (self.client_address[0]))
+        raise KeyboardInterrupt('connection time out')
 
     def handle(self):
 
@@ -145,7 +146,7 @@ class NNTPRequestHandler(SocketServer.StreamRequestHandler):
                 signal.alarm(__TIMEOUT__)
             try:
                 self.inputline = self.rfile.readline()
-            except IOError:
+            except IOError, KeyboardInterrupt:
                 continue
             if os.name == 'posix':
                 signal.alarm(0)
